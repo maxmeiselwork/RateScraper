@@ -106,6 +106,22 @@
     margin-top: 6px; word-break: break-all;
   }
 
+  /* ── Clear-file button ── */
+  .clear-btn {
+    display: none;
+    position: absolute;
+    top: 6px; right: 6px;
+    width: 22px; height: 22px;
+    background: #e53e3e; color: #fff;
+    border: none; border-radius: 50%;
+    font-size: 15px; line-height: 1;
+    cursor: pointer; z-index: 10;
+    align-items: center; justify-content: center;
+    padding: 0; transition: background .15s;
+  }
+  .clear-btn:hover { background: #c53030; }
+  .upload-zone.has-file .clear-btn { display: flex; }
+
   /* ── Initials field ── */
   .field { margin-top: 20px; }
   .field label { display: block; font-size: 13px; font-weight: 600; color: #1a2b4a; margin-bottom: 6px; }
@@ -154,6 +170,12 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
+  /* ── Zone-level inline error ── */
+  .zone-error {
+    margin-top: 6px; font-size: 11px; font-weight: 600;
+    color: #b91c1c; word-break: break-word;
+  }
+
   /* ── Info footer ── */
   .info {
     margin-top: 12px; font-size: 12px; color: #9aaabb;
@@ -191,6 +213,7 @@
           <div class="upload-zone" id="zone-sms-input">
             <input type="file" name="input_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-sms-input','name-sms-input')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-sms-input','name-sms-input')" title="Remove file">&times;</button>
             <div class="upload-icon">&#128196;</div>
             <h3>Expedia Price Grid</h3>
             <p>expedia_price_grid_&hellip;.xlsx</p>
@@ -199,6 +222,7 @@
           <div class="upload-zone" id="zone-sms-master">
             <input type="file" name="master_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-sms-master','name-sms-master')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-sms-master','name-sms-master')" title="Remove file">&times;</button>
             <div class="upload-icon">&#128209;</div>
             <h3>Master Rate Deck</h3>
             <p>KO-SMS-Rate Deck&hellip;.xlsx</p>
@@ -226,6 +250,7 @@
           <div class="upload-zone" id="zone-h2o-input">
             <input type="file" name="input_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-h2o-input','name-h2o-input')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-h2o-input','name-h2o-input')" title="Remove file">&times;</button>
             <div class="upload-icon">&#128196;</div>
             <h3>Expedia Price Grid</h3>
             <p>expedia_price_grid_&hellip;.xlsx</p>
@@ -234,6 +259,7 @@
           <div class="upload-zone" id="zone-h2o-master">
             <input type="file" name="master_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-h2o-master','name-h2o-master')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-h2o-master','name-h2o-master')" title="Remove file">&times;</button>
             <div class="upload-icon">&#128209;</div>
             <h3>Master Rate Deck</h3>
             <p>KO-H2O-Rate Deck&hellip;.xlsx</p>
@@ -261,6 +287,7 @@
           <div class="upload-zone" id="zone-swm-input">
             <input type="file" name="input_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-swm-input','name-swm-input')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-swm-input','name-swm-input')" title="Remove file">&times;</button>
             <div class="upload-icon">&#128196;</div>
             <h3>Lighthouse Rate Export</h3>
             <p>southwinds-motel_&hellip;.xlsx</p>
@@ -269,6 +296,7 @@
           <div class="upload-zone" id="zone-swm-master">
             <input type="file" name="master_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-swm-master','name-swm-master')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-swm-master','name-swm-master')" title="Remove file">&times;</button>
             <div class="upload-icon">&#128209;</div>
             <h3>Master Rate Deck</h3>
             <p>SWM-Rate Deck&hellip;.xlsx</p>
@@ -314,6 +342,33 @@ function fileChosen(input, zoneId, nameId) {
   }
 }
 
+// ── Clear uploaded file ───────────────────────────────────────
+function clearFile(e, zoneId, nameId) {
+  e.stopPropagation();
+  try {
+    const zone  = document.getElementById(zoneId);
+    const label = document.getElementById(nameId);
+    const input = zone.querySelector('input[type=file]');
+    input.value = '';
+    zone.classList.remove('has-file');
+    label.textContent = '';
+  } catch (err) {
+    showZoneError(zoneId, 'Could not remove the file: ' + err.message);
+  }
+}
+
+// ── Show an inline error on a zone (e.g. bad drop) ───────────
+function showZoneError(zoneId, msg) {
+  const zone = document.getElementById(zoneId);
+  const existing = zone.querySelector('.zone-error');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.className = 'zone-error';
+  el.textContent = msg;
+  zone.appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+}
+
 // ── Drag-and-drop styling ─────────────────────────────────────
 document.querySelectorAll('.upload-zone').forEach(zone => {
   zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
@@ -321,10 +376,16 @@ document.querySelectorAll('.upload-zone').forEach(zone => {
   zone.addEventListener('drop', e => {
     e.preventDefault();
     zone.classList.remove('drag-over');
-    const input = zone.querySelector('input[type=file]');
-    if (e.dataTransfer.files.length) {
-      input.files = e.dataTransfer.files;
-      input.dispatchEvent(new Event('change'));
+    try {
+      const input = zone.querySelector('input[type=file]');
+      if (e.dataTransfer.files.length) {
+        input.files = e.dataTransfer.files;
+        input.dispatchEvent(new Event('change'));
+      } else {
+        showZoneError(zone.id, 'No file detected in drop. Please try again.');
+      }
+    } catch (err) {
+      showZoneError(zone.id, 'Drop failed: ' + err.message);
     }
   });
 });
@@ -360,13 +421,21 @@ document.querySelectorAll('.upload-zone').forEach(zone => {
         status.className = 'status success';
         status.innerHTML = '&#10003;&nbsp; <strong>Done!</strong> Downloading <em>' + fname + '</em>';
       } else {
-        const data = await res.json().catch(() => ({ error: 'Server error' }));
+        let errMsg = 'An unexpected server error occurred. Please try again.';
+        try {
+          const data = await res.json();
+          if (data && data.error) errMsg = data.error;
+        } catch (_) { /* response was not JSON — use default message */ }
         status.className = 'status error';
-        status.innerHTML = '&#9888;&nbsp; <strong>Error:</strong> ' + (data.error || 'Unknown error');
+        status.innerHTML = '&#9888;&nbsp; <strong>Error:</strong> ' + errMsg;
       }
     } catch (err) {
+      const isNetwork = err instanceof TypeError;
+      const msg = isNetwork
+        ? 'Could not reach the server. Check that the app is running and try again.'
+        : (err.message || 'An unknown error occurred.');
       status.className = 'status error';
-      status.innerHTML = '&#9888;&nbsp; <strong>Error:</strong> ' + err.message;
+      status.innerHTML = '&#9888;&nbsp; <strong>Error:</strong> ' + msg;
     } finally {
       btn.disabled = false;
     }
