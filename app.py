@@ -11,6 +11,26 @@ from io import BytesIO
 from datetime import datetime, date
 import traceback
 
+# openpyxl's Serialisable.__hash__ has no caching, so files with many named
+# styles rehash the same Border/Fill/Font objects thousands of times during
+# apply_stylesheet, causing the gunicorn worker to time out.  This patch
+# memoizes each hash result on the object itself, making repeated hashes O(1).
+try:
+    from openpyxl.descriptors.serialisable import Serialisable as _Serialisable
+    _orig_hash = _Serialisable.__hash__
+
+    def _cached_hash(self):
+        try:
+            return self.__dict__['_h']
+        except KeyError:
+            h = _orig_hash(self)
+            self.__dict__['_h'] = h
+            return h
+
+    _Serialisable.__hash__ = _cached_hash
+except Exception:
+    pass
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
 
