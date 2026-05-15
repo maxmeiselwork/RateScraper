@@ -265,10 +265,13 @@ def build_bookingcom_date_row_map(ws):
 # Core processors
 # ---------------------------------------------------------------------------
 
-def process_expedia(master_wb, master_wb_ro, input_wb, competitor_map, log):
+def process_expedia(master_wb_ro, input_wb, competitor_map, log):
+    """
+    Compute all cell writes needed from the Expedia input.
+    Returns {sheet_name: {(row, col): value}} — does not touch master_wb.
+    """
     ws_expedia = input_wb.active  # "Expedia - Revenue management"
 
-    # Map Expedia row to deck keyword by scanning col A rows 12-30
     expedia_row_for = {}
     for row in range(12, 31):
         name = ws_expedia.cell(row, 1).value
@@ -284,15 +287,13 @@ def process_expedia(master_wb, master_wb_ro, input_wb, competitor_map, log):
 
     expedia_date_col = build_expedia_date_col_map(ws_expedia)
     if expedia_date_col:
-        d_min = min(expedia_date_col).isoformat()
-        d_max = max(expedia_date_col).isoformat()
-        log.append('Expedia date range: ' + d_min + ' to ' + d_max)
+        log.append('Expedia date range: ' + min(expedia_date_col).isoformat() +
+                   ' to ' + max(expedia_date_col).isoformat())
 
-    cells_written = 0
+    writes = {}
     sheets_missed = 0
     cols_missed = 0
     for target_date, exp_col in expedia_date_col.items():
-        # Use data_only workbook for lookups so formula cells return computed values
         deck_ws_ro = find_sheet_for_date(master_wb_ro, target_date)
         if deck_ws_ro is None:
             sheets_missed += 1
@@ -303,27 +304,27 @@ def process_expedia(master_wb, master_wb_ro, input_wb, competitor_map, log):
             log.append('No col for ' + target_date.isoformat() + ' in ' + deck_ws_ro.title)
             continue
 
-        # Write to the regular (formula-preserving) workbook
-        deck_ws = master_wb[deck_ws_ro.title]
-
+        sheet_writes = writes.setdefault(deck_ws_ro.title, {})
         for deck_kw, exp_row in expedia_row_for.items():
             deck_row = find_row_for_label(deck_ws_ro, deck_kw)
             if deck_row is None:
                 continue
             val = normalize_expedia(ws_expedia.cell(exp_row, exp_col).value)
             if val is not None:
-                deck_ws.cell(deck_row, deck_col).value = val
-                cells_written += 1
+                sheet_writes[(deck_row, deck_col)] = val
 
     if sheets_missed:
         log.append('Dates skipped (no matching sheet): ' + str(sheets_missed))
     if cols_missed:
         log.append('Dates skipped (no matching column): ' + str(cols_missed))
-    log.append('Cells written: ' + str(cells_written))
+    return writes
 
 
-def process_bookingcom(master_wb, master_wb_ro, input_wb, log):
-    # SWM input is always a Lighthouse/Booking.com export - use the "Rates" sheet only.
+def process_bookingcom(master_wb_ro, input_wb, log):
+    """
+    Compute all cell writes needed from the Booking.com input.
+    Returns {sheet_name: {(row, col): value}} — does not touch master_wb.
+    """
     if 'Rates' not in input_wb.sheetnames:
         raise ValueError(
             'Expected a Lighthouse "Rates" sheet but found: ' + str(input_wb.sheetnames) +
@@ -331,7 +332,6 @@ def process_bookingcom(master_wb, master_wb_ro, input_wb, log):
         )
     ws_rates = input_wb['Rates']
 
-    # Map Booking.com column to deck keyword by scanning row 5 headers
     bookingcom_col_for = {}
     for col in range(4, ws_rates.max_column + 1):
         header = ws_rates.cell(5, col).value
@@ -347,9 +347,10 @@ def process_bookingcom(master_wb, master_wb_ro, input_wb, log):
 
     bc_date_row = build_bookingcom_date_row_map(ws_rates)
     if bc_date_row:
-        log.append('Booking.com date range: ' + min(bc_date_row).isoformat() + ' to ' + max(bc_date_row).isoformat())
+        log.append('Booking.com date range: ' + min(bc_date_row).isoformat() +
+                   ' to ' + max(bc_date_row).isoformat())
 
-    cells_written = 0
+    writes = {}
     cols_missed = 0
     for target_date, bc_row in bc_date_row.items():
         deck_ws_ro = find_sheet_for_date(master_wb_ro, target_date)
@@ -361,19 +362,28 @@ def process_bookingcom(master_wb, master_wb_ro, input_wb, log):
             log.append('No col for ' + target_date.isoformat() + ' in ' + deck_ws_ro.title)
             continue
 
-        deck_ws = master_wb[deck_ws_ro.title]
-
+        sheet_writes = writes.setdefault(deck_ws_ro.title, {})
         for deck_kw, bc_col in bookingcom_col_for.items():
             deck_row = find_row_for_label(deck_ws_ro, deck_kw)
             if deck_row is None:
                 continue
             val = normalize_bookingcom(ws_rates.cell(bc_row, bc_col).value)
             if val is not None:
-                deck_ws.cell(deck_row, deck_col).value = val
-                cells_written += 1
+                sheet_writes[(deck_row, deck_col)] = val
 
     if cols_missed:
         log.append('Dates skipped (no matching column): ' + str(cols_missed))
+    return writes
+
+
+def apply_writes(master_wb, writes, log):
+    """Apply a writes dict (from process_expedia/bookingcom) to the write workbook."""
+    cells_written = 0
+    for sheet_name, cell_writes in writes.items():
+        ws = master_wb[sheet_name]
+        for (row, col), val in cell_writes.items():
+            ws.cell(row, col).value = val
+            cells_written += 1
     log.append('Cells written: ' + str(cells_written))
 
 
@@ -405,19 +415,23 @@ def generate():
 
         log.append('Loading master: ' + master_file.filename)
         master_bytes = master_file.read()
-        # Load twice: data_only for reading cached formula values, normal for writing.
-        # Named-style binding is patched to a no-op above so both loads are fast.
+
+        # Phase 1: compute all writes using the data_only workbook, then free it
+        # before loading the write copy.  Only one full workbook lives in memory
+        # at a time, keeping peak usage well under the container limit.
         master_wb_ro = openpyxl.load_workbook(BytesIO(master_bytes), data_only=True)
-        master_wb    = openpyxl.load_workbook(BytesIO(master_bytes))
-
         if prop == 'h2o':
-            process_expedia(master_wb, master_wb_ro, input_wb, H2O_EXPEDIA_MAP, log)
+            writes = process_expedia(master_wb_ro, input_wb, H2O_EXPEDIA_MAP, log)
         elif prop == 'sms':
-            process_expedia(master_wb, master_wb_ro, input_wb, SMS_EXPEDIA_MAP, log)
-        elif prop == 'swm':
-            process_bookingcom(master_wb, master_wb_ro, input_wb, log)
-
+            writes = process_expedia(master_wb_ro, input_wb, SMS_EXPEDIA_MAP, log)
+        else:
+            writes = process_bookingcom(master_wb_ro, input_wb, log)
         master_wb_ro.close()
+        del master_wb_ro
+
+        # Phase 2: load write copy, apply the pre-computed writes, save
+        master_wb = openpyxl.load_workbook(BytesIO(master_bytes))
+        apply_writes(master_wb, writes, log)
 
         today = datetime.now().strftime('%y%m%d')
         prop_label = {'h2o': 'H2O', 'sms': 'SMS', 'swm': 'SWM'}[prop]
