@@ -405,9 +405,9 @@ def generate():
 
         log.append('Loading master: ' + master_file.filename)
         master_bytes = master_file.read()
-        # Load twice: streaming read-only copy for lookups (skips stylesheet parsing,
-        # far less memory), normal copy for writing output.
-        master_wb_ro = openpyxl.load_workbook(BytesIO(master_bytes), read_only=True, data_only=True)
+        # Load twice: data_only for reading cached formula values, normal for writing.
+        # Named-style binding is patched to a no-op above so both loads are fast.
+        master_wb_ro = openpyxl.load_workbook(BytesIO(master_bytes), data_only=True)
         master_wb    = openpyxl.load_workbook(BytesIO(master_bytes))
 
         if prop == 'h2o':
