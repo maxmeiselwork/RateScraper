@@ -392,8 +392,9 @@ def generate():
 
         log.append('Loading master: ' + master_file.filename)
         master_bytes = master_file.read()
-        # Load twice: data_only for reading computed formula values, normal for writing
-        master_wb_ro = openpyxl.load_workbook(BytesIO(master_bytes), data_only=True)
+        # Load twice: streaming read-only copy for lookups (skips stylesheet parsing,
+        # far less memory), normal copy for writing output.
+        master_wb_ro = openpyxl.load_workbook(BytesIO(master_bytes), read_only=True, data_only=True)
         master_wb    = openpyxl.load_workbook(BytesIO(master_bytes))
 
         if prop == 'h2o':
@@ -402,6 +403,8 @@ def generate():
             process_expedia(master_wb, master_wb_ro, input_wb, SMS_EXPEDIA_MAP, log)
         elif prop == 'swm':
             process_bookingcom(master_wb, master_wb_ro, input_wb, log)
+
+        master_wb_ro.close()
 
         today = datetime.now().strftime('%y%m%d')
         prop_label = {'h2o': 'H2O', 'sms': 'SMS', 'swm': 'SWM'}[prop]
