@@ -108,14 +108,27 @@ def normalize_bookingcom(val):
 # Sheet / cell lookups
 # ---------------------------------------------------------------------------
 
+def _normalise_month_str(s):
+    """
+    Normalise month strings so strptime can parse them regardless of
+    how the spreadsheet spells the month name.
+    Handles: full names, 3-letter abbreviations, and 'Sept' (4-letter variant).
+    Works for any year.
+    """
+    s = s.strip()
+    # 'Sept YYYY' -> 'Sep YYYY'  (strptime only knows 3-letter 'Sep')
+    import re
+    s = re.sub(r'\bSept\b', 'Sep', s, flags=re.IGNORECASE)
+    return s
+
 def parse_sheet_month_year(sheet_name):
-    """Return (year, month) from tab names like 'May 2026', 'Jan 2026', 'Sept 2026'. None on failure."""
-    name = sheet_name.strip()
-
-    # Normalise non-standard abbreviations before parsing
-    # 'Sept' -> 'Sep' (Python strptime only accepts 3-letter abbreviated months)
-    name = name.replace('Sept ', 'Sep ')
-
+    """
+    Return (year, month) from any tab name like:
+      'May 2026', 'Jan 2026', 'Sept 2026', 'September 2026', 'Jan 2028', etc.
+    Returns None if the name cannot be parsed as a month+year.
+    Works for any future year automatically.
+    """
+    name = _normalise_month_str(sheet_name)
     for fmt in ('%B %Y', '%b %Y'):
         try:
             dt = datetime.strptime(name, fmt)
@@ -136,7 +149,9 @@ def find_col_for_date(ws, target_date, header_row=3, min_col=2):
     """
     Return the column index for target_date in a Rate Deck sheet.
     Strategy 1: direct match on row 3 (works when cells hold actual date values).
-    Strategy 2: offset from A4 (used when row 3 contains formula strings).
+    Strategy 2: offset from A4 (works when A4 holds a real datetime anchor).
+    Strategy 3: offset from the 1st of the month (fallback when A4 is a formula).
+    Pass a data_only-loaded worksheet for best results.
     """
     # Strategy 1: scan row 3 for a real date value
     for col in range(min_col, ws.max_column + 1):
@@ -156,6 +171,13 @@ def find_col_for_date(ws, target_date, header_row=3, min_col=2):
             col = min_col + offset
             if col <= ws.max_column:
                 return col
+
+    # Strategy 3: derive start from target_date's own month (works even when A4 is a formula)
+    first_of_month = date(target_date.year, target_date.month, 1)
+    offset = (target_date - first_of_month).days
+    col = min_col + offset
+    if col <= ws.max_column:
+        return col
 
     return None
 
@@ -185,12 +207,15 @@ def build_expedia_date_col_map(ws):
     for col in range(2, ws.max_column + 1):
         month_cell = ws.cell(9, col).value
         if month_cell and isinstance(month_cell, str) and len(month_cell.strip()) > 4:
-            try:
-                dt = datetime.strptime(month_cell.strip().title(), '%B %Y')
-                current_month = dt.month
-                current_year = dt.year
-            except ValueError:
-                pass
+            normalised = _normalise_month_str(month_cell).title()  # e.g. "September 2026"
+            for fmt in ('%B %Y', '%b %Y'):
+                try:
+                    dt = datetime.strptime(normalised, fmt)
+                    current_month = dt.month
+                    current_year = dt.year
+                    break
+                except ValueError:
+                    pass
 
         if current_month is None:
             continue
@@ -227,7 +252,7 @@ def build_bookingcom_date_row_map(ws):
 # Core processors
 # ---------------------------------------------------------------------------
 
-def process_expedia(master_wb, input_wb, competitor_map, log):
+def process_expedia(master_wb, master_wb_ro, input_wb, competitor_map, log):
     ws_expedia = input_wb.active  # "Expedia - Revenue management"
 
     # Map Expedia row to deck keyword by scanning col A rows 12-30
@@ -251,16 +276,25 @@ def process_expedia(master_wb, input_wb, competitor_map, log):
         log.append('Expedia date range: ' + d_min + ' to ' + d_max)
 
     cells_written = 0
+    sheets_missed = 0
+    cols_missed = 0
     for target_date, exp_col in expedia_date_col.items():
-        deck_ws = find_sheet_for_date(master_wb, target_date)
-        if deck_ws is None:
+        # Use data_only workbook for lookups so formula cells return computed values
+        deck_ws_ro = find_sheet_for_date(master_wb_ro, target_date)
+        if deck_ws_ro is None:
+            sheets_missed += 1
             continue
-        deck_col = find_col_for_date(deck_ws, target_date)
+        deck_col = find_col_for_date(deck_ws_ro, target_date)
         if deck_col is None:
+            cols_missed += 1
+            log.append('No col for ' + target_date.isoformat() + ' in ' + deck_ws_ro.title)
             continue
 
+        # Write to the regular (formula-preserving) workbook
+        deck_ws = master_wb[deck_ws_ro.title]
+
         for deck_kw, exp_row in expedia_row_for.items():
-            deck_row = find_row_for_label(deck_ws, deck_kw)
+            deck_row = find_row_for_label(deck_ws_ro, deck_kw)
             if deck_row is None:
                 continue
             val = normalize_expedia(ws_expedia.cell(exp_row, exp_col).value)
@@ -268,10 +302,14 @@ def process_expedia(master_wb, input_wb, competitor_map, log):
                 deck_ws.cell(deck_row, deck_col).value = val
                 cells_written += 1
 
+    if sheets_missed:
+        log.append('Dates skipped (no matching sheet): ' + str(sheets_missed))
+    if cols_missed:
+        log.append('Dates skipped (no matching column): ' + str(cols_missed))
     log.append('Cells written: ' + str(cells_written))
 
 
-def process_bookingcom(master_wb, input_wb, log):
+def process_bookingcom(master_wb, master_wb_ro, input_wb, log):
     # SWM input is always a Lighthouse/Booking.com export - use the "Rates" sheet only.
     if 'Rates' not in input_wb.sheetnames:
         raise ValueError(
@@ -299,16 +337,21 @@ def process_bookingcom(master_wb, input_wb, log):
         log.append('Booking.com date range: ' + min(bc_date_row).isoformat() + ' to ' + max(bc_date_row).isoformat())
 
     cells_written = 0
+    cols_missed = 0
     for target_date, bc_row in bc_date_row.items():
-        deck_ws = find_sheet_for_date(master_wb, target_date)
-        if deck_ws is None:
+        deck_ws_ro = find_sheet_for_date(master_wb_ro, target_date)
+        if deck_ws_ro is None:
             continue
-        deck_col = find_col_for_date(deck_ws, target_date)
+        deck_col = find_col_for_date(deck_ws_ro, target_date)
         if deck_col is None:
+            cols_missed += 1
+            log.append('No col for ' + target_date.isoformat() + ' in ' + deck_ws_ro.title)
             continue
 
+        deck_ws = master_wb[deck_ws_ro.title]
+
         for deck_kw, bc_col in bookingcom_col_for.items():
-            deck_row = find_row_for_label(deck_ws, deck_kw)
+            deck_row = find_row_for_label(deck_ws_ro, deck_kw)
             if deck_row is None:
                 continue
             val = normalize_bookingcom(ws_rates.cell(bc_row, bc_col).value)
@@ -316,6 +359,8 @@ def process_bookingcom(master_wb, input_wb, log):
                 deck_ws.cell(deck_row, deck_col).value = val
                 cells_written += 1
 
+    if cols_missed:
+        log.append('Dates skipped (no matching column): ' + str(cols_missed))
     log.append('Cells written: ' + str(cells_written))
 
 
@@ -346,14 +391,17 @@ def generate():
         input_wb = openpyxl.load_workbook(BytesIO(input_file.read()), data_only=True)
 
         log.append('Loading master: ' + master_file.filename)
-        master_wb = openpyxl.load_workbook(BytesIO(master_file.read()))
+        master_bytes = master_file.read()
+        # Load twice: data_only for reading computed formula values, normal for writing
+        master_wb_ro = openpyxl.load_workbook(BytesIO(master_bytes), data_only=True)
+        master_wb    = openpyxl.load_workbook(BytesIO(master_bytes))
 
         if prop == 'h2o':
-            process_expedia(master_wb, input_wb, H2O_EXPEDIA_MAP, log)
+            process_expedia(master_wb, master_wb_ro, input_wb, H2O_EXPEDIA_MAP, log)
         elif prop == 'sms':
-            process_expedia(master_wb, input_wb, SMS_EXPEDIA_MAP, log)
+            process_expedia(master_wb, master_wb_ro, input_wb, SMS_EXPEDIA_MAP, log)
         elif prop == 'swm':
-            process_bookingcom(master_wb, input_wb, log)
+            process_bookingcom(master_wb, master_wb_ro, input_wb, log)
 
         today = datetime.now().strftime('%y%m%d')
         prop_label = {'h2o': 'H2O', 'sms': 'SMS', 'swm': 'SWM'}[prop]
