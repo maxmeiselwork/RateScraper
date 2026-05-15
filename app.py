@@ -11,23 +11,16 @@ from io import BytesIO
 from datetime import datetime, date
 import traceback
 
-# openpyxl's Serialisable.__hash__ has no caching, so files with many named
-# styles rehash the same Border/Fill/Font objects thousands of times during
-# apply_stylesheet, causing the gunicorn worker to time out.  This patch
-# memoizes each hash result on the object itself, making repeated hashes O(1).
+# Files with many accumulated named styles (Normal, Heading 1, custom, etc.)
+# cause openpyxl's apply_stylesheet to spend minutes in NamedStyle._recalculate,
+# which indexes every named style's border/font/fill/alignment into the workbook's
+# IndexedLists using slow recursive __hash__/__eq__ comparisons.  We never apply
+# named styles by name — we only write cell values — so skipping _recalculate is
+# safe and eliminates the timeout entirely.  Cell-level xf formatting is loaded
+# before this step and is unaffected.
 try:
-    from openpyxl.descriptors.serialisable import Serialisable as _Serialisable
-    _orig_hash = _Serialisable.__hash__
-
-    def _cached_hash(self):
-        try:
-            return self.__dict__['_h']
-        except KeyError:
-            h = _orig_hash(self)
-            self.__dict__['_h'] = h
-            return h
-
-    _Serialisable.__hash__ = _cached_hash
+    from openpyxl.styles.named_styles import NamedStyle as _NamedStyle
+    _NamedStyle._recalculate = lambda self: None
 except Exception:
     pass
 
