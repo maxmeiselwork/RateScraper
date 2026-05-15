@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rate Deck Automation</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f0f2f5;
+    min-height: 100vh;
+    color: #1a2b4a;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: #1a2b4a;
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+  .header-icon {
+    width: 40px; height: 40px;
+    background: #c9a84c;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+  .header h1 { color: #fff; font-size: 22px; font-weight: 600; }
+  .header p  { color: #8fa8cc; font-size: 13px; margin-top: 2px; }
+
+  /* ── Main ── */
+  .main { max-width: 760px; margin: 40px auto; padding: 0 20px 60px; }
+
+  /* ── Tabs ── */
+  .tab-bar {
+    display: flex; gap: 4px;
+    background: #dde3ec;
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 28px;
+  }
+  .tab-btn {
+    flex: 1; padding: 10px 0;
+    border: none; border-radius: 8px;
+    background: transparent;
+    font-size: 15px; font-weight: 600; color: #5a6e8a;
+    cursor: pointer; transition: all .18s;
+  }
+  .tab-btn.active {
+    background: #1a2b4a; color: #fff;
+    box-shadow: 0 2px 6px rgba(26,43,74,.3);
+  }
+  .tab-btn:hover:not(.active) { background: rgba(26,43,74,.08); color: #1a2b4a; }
+
+  /* ── Card ── */
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 32px;
+    box-shadow: 0 2px 12px rgba(26,43,74,.08);
+  }
+  .card h2 {
+    font-size: 18px; font-weight: 700; color: #1a2b4a;
+    margin-bottom: 6px;
+  }
+  .card .subtitle {
+    font-size: 13px; color: #7a8fa8;
+    margin-bottom: 28px;
+  }
+
+  /* ── Upload zones ── */
+  .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 520px) { .upload-grid { grid-template-columns: 1fr; } }
+
+  .upload-zone {
+    border: 2px dashed #c4cedc;
+    border-radius: 10px;
+    padding: 24px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all .18s;
+    position: relative;
+    background: #f8fafc;
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: #1a2b4a;
+    background: #eef2f8;
+  }
+  .upload-zone.has-file {
+    border-color: #2a9d5c;
+    background: #f0faf4;
+  }
+  .upload-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%;
+  }
+  .upload-icon { font-size: 28px; margin-bottom: 8px; }
+  .upload-zone h3 { font-size: 13px; font-weight: 700; color: #1a2b4a; margin-bottom: 4px; }
+  .upload-zone p  { font-size: 12px; color: #7a8fa8; }
+  .upload-zone .file-name {
+    font-size: 12px; font-weight: 600; color: #2a9d5c;
+    margin-top: 6px; word-break: break-all;
+  }
+
+  /* ── Initials field ── */
+  .field { margin-top: 20px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; color: #1a2b4a; margin-bottom: 6px; }
+  .field input[type=text] {
+    width: 180px; padding: 10px 14px;
+    border: 1.5px solid #c4cedc; border-radius: 8px;
+    font-size: 15px; color: #1a2b4a;
+    outline: none; transition: border-color .18s;
+  }
+  .field input[type=text]:focus { border-color: #1a2b4a; }
+
+  /* ── Button ── */
+  .btn-generate {
+    margin-top: 28px; width: 100%;
+    padding: 14px;
+    background: #1a2b4a; color: #fff;
+    border: none; border-radius: 10px;
+    font-size: 16px; font-weight: 700;
+    cursor: pointer; transition: background .18s;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn-generate:hover:not(:disabled) { background: #223662; }
+  .btn-generate:disabled { background: #8fa8cc; cursor: not-allowed; }
+
+  /* ── Status ── */
+  .status {
+    margin-top: 20px; padding: 14px 18px;
+    border-radius: 8px; font-size: 14px; font-weight: 500;
+    display: none;
+  }
+  .status.loading { display: flex; align-items: center; gap: 10px; background: #eef2f8; color: #1a2b4a; }
+  .status.success { display: block; background: #f0faf4; color: #1a6b3e; border: 1px solid #a8dbbe; }
+  .status.error   { display: block; background: #fff0f0; color: #b91c1c; border: 1px solid #fca5a5; }
+
+  .spinner {
+    width: 18px; height: 18px;
+    border: 2.5px solid #c4cedc;
+    border-top-color: #1a2b4a;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Tab panels ── */
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Info footer ── */
+  .info {
+    margin-top: 12px; font-size: 12px; color: #9aaabb;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-icon">&#127970;</div>
+  <div>
+    <h1>Rate Deck Automation</h1>
+    <p>Upload competitor data from Expedia or Lighthouse and an old Rate Deck and get a filled Rate Deck instantly</p>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="sms">SMS</button>
+    <button class="tab-btn"        data-tab="h2o">H2O</button>
+    <button class="tab-btn"        data-tab="swm">SWM</button>
+  </div>
+
+  <!-- ══ SMS ══ -->
+  <div class="tab-panel active" id="tab-sms">
+    <div class="card">
+      <h2>Santa Maria Suites (SMS)</h2>
+      <p class="subtitle">Source: Expedia price grid. Competitors: Margaritaville, Casa Marina, Hyatt Centric, Ocean Key, Pier House, Southernmost, Reach/Curio</p>
+      <form id="form-sms">
+        <input type="hidden" name="property" value="sms" />
+        <div class="upload-grid">
+          <div class="upload-zone" id="zone-sms-input">
+            <input type="file" name="input_file" accept=".xlsx,.xls" required
+                   onchange="fileChosen(this,'zone-sms-input','name-sms-input')" />
+            <div class="upload-icon">&#128196;</div>
+            <h3>Expedia Price Grid</h3>
+            <p>expedia_price_grid_&hellip;.xlsx</p>
+            <div class="file-name" id="name-sms-input"></div>
+          </div>
+          <div class="upload-zone" id="zone-sms-master">
+            <input type="file" name="master_file" accept=".xlsx,.xls" required
+                   onchange="fileChosen(this,'zone-sms-master','name-sms-master')" />
+            <div class="upload-icon">&#128209;</div>
+            <h3>Master Rate Deck</h3>
+            <p>KO-SMS-Rate Deck&hellip;.xlsx</p>
+            <div class="file-name" id="name-sms-master"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Your Initials</label>
+          <input type="text" name="initials" placeholder="e.g. KO" maxlength="5" required />
+        </div>
+        <button type="submit" class="btn-generate">Generate Rate Deck</button>
+      </form>
+      <div class="status" id="status-sms"></div>
+    </div>
+  </div>
+
+  <!-- ══ H2O ══ -->
+  <div class="tab-panel" id="tab-h2o">
+    <div class="card">
+      <h2>H2O Suites (H2O)</h2>
+      <p class="subtitle">Source: Expedia price grid. Competitors: Margaritaville, Casa Marina, Hyatt Centric, Ocean Key, Pier House, Southernmost, Reach/Curio, Courtyard</p>
+      <form id="form-h2o">
+        <input type="hidden" name="property" value="h2o" />
+        <div class="upload-grid">
+          <div class="upload-zone" id="zone-h2o-input">
+            <input type="file" name="input_file" accept=".xlsx,.xls" required
+                   onchange="fileChosen(this,'zone-h2o-input','name-h2o-input')" />
+            <div class="upload-icon">&#128196;</div>
+            <h3>Expedia Price Grid</h3>
+            <p>expedia_price_grid_&hellip;.xlsx</p>
+            <div class="file-name" id="name-h2o-input"></div>
+          </div>
+          <div class="upload-zone" id="zone-h2o-master">
+            <input type="file" name="master_file" accept=".xlsx,.xls" required
+                   onchange="fileChosen(this,'zone-h2o-master','name-h2o-master')" />
+            <div class="upload-icon">&#128209;</div>
+            <h3>Master Rate Deck</h3>
+            <p>KO-H2O-Rate Deck&hellip;.xlsx</p>
+            <div class="file-name" id="name-h2o-master"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Your Initials</label>
+          <input type="text" name="initials" placeholder="e.g. KO" maxlength="5" required />
+        </div>
+        <button type="submit" class="btn-generate">Generate Rate Deck</button>
+      </form>
+      <div class="status" id="status-h2o"></div>
+    </div>
+  </div>
+
+  <!-- ══ SWM ══ -->
+  <div class="tab-panel" id="tab-swm">
+    <div class="card">
+      <h2>Southwinds Motel (SWM)</h2>
+      <p class="subtitle">Source: Lighthouse rate export. Competitors: Blue Marlin, Best Western, Blue Flamingo, Courtyard, Fairfield Inn</p>
+      <form id="form-swm">
+        <input type="hidden" name="property" value="swm" />
+        <div class="upload-grid">
+          <div class="upload-zone" id="zone-swm-input">
+            <input type="file" name="input_file" accept=".xlsx,.xls" required
+                   onchange="fileChosen(this,'zone-swm-input','name-swm-input')" />
+            <div class="upload-icon">&#128196;</div>
+            <h3>Lighthouse Rate Export</h3>
+            <p>southwinds-motel_&hellip;.xlsx</p>
+            <div class="file-name" id="name-swm-input"></div>
+          </div>
+          <div class="upload-zone" id="zone-swm-master">
+            <input type="file" name="master_file" accept=".xlsx,.xls" required
+                   onchange="fileChosen(this,'zone-swm-master','name-swm-master')" />
+            <div class="upload-icon">&#128209;</div>
+            <h3>Master Rate Deck</h3>
+            <p>SWM-Rate Deck&hellip;.xlsx</p>
+            <div class="file-name" id="name-swm-master"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Your Initials</label>
+          <input type="text" name="initials" placeholder="e.g. KO" maxlength="5" required />
+        </div>
+        <button type="submit" class="btn-generate">Generate Rate Deck</button>
+      </form>
+      <div class="status" id="status-swm"></div>
+    </div>
+  </div>
+
+  <p class="info">Files are processed locally and never stored on any server.</p>
+
+</div><!-- /main -->
+
+<script>
+// ── Tab switching ─────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + tab).classList.add('active');
+  });
+});
+
+// ── File chosen indicator ─────────────────────────────────────
+function fileChosen(input, zoneId, nameId) {
+  const zone = document.getElementById(zoneId);
+  const label = document.getElementById(nameId);
+  if (input.files.length) {
+    zone.classList.add('has-file');
+    label.textContent = input.files[0].name;
+  } else {
+    zone.classList.remove('has-file');
+    label.textContent = '';
+  }
+}
+
+// ── Drag-and-drop styling ─────────────────────────────────────
+document.querySelectorAll('.upload-zone').forEach(zone => {
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const input = zone.querySelector('input[type=file]');
+    if (e.dataTransfer.files.length) {
+      input.files = e.dataTransfer.files;
+      input.dispatchEvent(new Event('change'));
+    }
+  });
+});
+
+// ── Form submit ───────────────────────────────────────────────
+['sms', 'h2o', 'swm'].forEach(prop => {
+  document.getElementById('form-' + prop).addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const status = document.getElementById('status-' + prop);
+    const btn    = this.querySelector('.btn-generate');
+
+    // Show loading
+    status.className = 'status loading';
+    status.innerHTML = '<div class="spinner"></div><span>Processing spreadsheet&hellip; this may take a moment.</span>';
+    btn.disabled = true;
+
+    try {
+      const fd = new FormData(this);
+      const res = await fetch('/generate', { method: 'POST', body: fd });
+
+      if (res.ok) {
+        // Trigger download
+        const blob = await res.blob();
+        const cd   = res.headers.get('Content-Disposition') || '';
+        const match = cd.match(/filename="?([^"]+)"?/);
+        const fname = match ? match[1] : 'Rate Deck.xlsx';
+
+        const url = URL.createObjectURL(blob);
+        const a   = document.createElement('a');
+        a.href = url; a.download = fname; a.click();
+        URL.revokeObjectURL(url);
+
+        status.className = 'status success';
+        status.innerHTML = '&#10003;&nbsp; <strong>Done!</strong> Downloading <em>' + fname + '</em>';
+      } else {
+        const data = await res.json().catch(() => ({ error: 'Server error' }));
+        status.className = 'status error';
+        status.innerHTML = '&#9888;&nbsp; <strong>Error:</strong> ' + (data.error || 'Unknown error');
+      }
+    } catch (err) {
+      status.className = 'status error';
+      status.innerHTML = '&#9888;&nbsp; <strong>Error:</strong> ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+</script>
+</body>
+</html>
