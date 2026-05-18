@@ -7,9 +7,11 @@ Fills competitor rates from Expedia/Booking.com into hotel Rate Deck spreadsheet
 
 from flask import Flask, render_template, request, send_file, jsonify
 import openpyxl
-from io import BytesIO
+import csv
+from io import BytesIO, StringIO
 from datetime import datetime, date
 import traceback
+import calendar
 
 # Files with many accumulated named styles (Normal, Heading 1, custom, etc.)
 # cause openpyxl's apply_stylesheet to spend minutes in NamedStyle._recalculate,
@@ -377,7 +379,7 @@ def process_bookingcom(master_wb_ro, input_wb, log):
 
 
 def apply_writes(master_wb, writes, log):
-    """Apply a writes dict (from process_expedia/bookingcom) to the write workbook."""
+    """Apply a writes dict to master_wb.  None values clear the cell."""
     cells_written = 0
     for sheet_name, cell_writes in writes.items():
         ws = master_wb[sheet_name]
@@ -385,6 +387,225 @@ def apply_writes(master_wb, writes, log):
             ws.cell(row, col).value = val
             cells_written += 1
     log.append('Cells written: ' + str(cells_written))
+
+
+# ---------------------------------------------------------------------------
+# Forecasted Revenue
+# ---------------------------------------------------------------------------
+
+def _parse_num(s, force_int=False):
+    """Parse a possibly-comma-formatted number string.  Returns None on failure."""
+    s = str(s).strip().replace(',', '') if s else ''
+    if not s:
+        return None
+    try:
+        v = float(s)
+        return int(v) if force_int else _to_int_if_whole(v)
+    except ValueError:
+        return None
+
+
+def parse_forecast_csv(csv_bytes):
+    """
+    Parse a Room Master Report Forecasted Revenue CSV.
+    Expected columns (1-indexed):
+      A: Revenue Period  e.g. "05/01/2026   Friday"
+      B: Daily Filled
+      D: Booked Rooms
+      F: Cur ADR
+    Header is row 1; data starts row 2.
+    Returns {date: (daily_filled, booked_rooms, cur_adr)}.
+    """
+    text = csv_bytes.decode('utf-8-sig', errors='replace')
+    reader = csv.reader(StringIO(text))
+    data = {}
+    first = True
+    for row in reader:
+        if first:
+            first = False
+            continue  # skip header row
+        if not row or not row[0].strip():
+            continue
+        date_str = row[0].strip().split()[0]  # "05/01/2026" from "05/01/2026   Friday"
+        try:
+            d = datetime.strptime(date_str, '%m/%d/%Y').date()
+        except ValueError:
+            continue
+        daily_filled = _parse_num(row[1] if len(row) > 1 else '', force_int=True)
+        booked_rooms = _parse_num(row[3] if len(row) > 3 else '', force_int=True)
+        cur_adr      = _parse_num(row[5] if len(row) > 5 else '')
+        data[d] = (daily_filled, booked_rooms, cur_adr)
+    if not data:
+        raise ValueError(
+            'No valid date rows found in the Forecasted Revenue file. '
+            'Expected a CSV with dates in column A (MM/DD/YYYY format), '
+            'Daily Filled in column B, Booked Rooms in column D, and ADR in column F.'
+        )
+    return data
+
+
+def process_forecast(master_wb_ro, forecast_data, log):
+    """
+    Compute all cell changes for the weekly forecast update.
+    For each affected month sheet:
+      Rooms section  (rows 7-11):
+        • Row 9 (Rooms Filled)  → value-paste to row 10 (Total Last Week)
+        • Rows 8 & 9 cleared
+        • Row 9 ← forecast col B (Daily Filled)
+        • Row 8 ← forecast col D (Booked Rooms)
+      ADR section (rows 14-18):
+        • Rows 14-17 → value-paste down one row (14→15, 15→16, 16→17, 17→18)
+          overwriting old row 18 (4 Week Prior — deleted)
+        • Row 14 cleared then ← forecast col F (Cur ADR)
+    Returns {sheet_name: {(row, col): value}} suitable for apply_writes.
+    """
+    sheet_date_cols = {}  # sheet_name → {date: col}
+    skipped = 0
+    for d in forecast_data:
+        ws_ro = find_sheet_for_date(master_wb_ro, d)
+        if ws_ro is None:
+            skipped += 1
+            continue
+        col = find_col_for_date(ws_ro, d)
+        if col is None:
+            skipped += 1
+            continue
+        sheet_date_cols.setdefault(ws_ro.title, {})[d] = col
+
+    writes = {}
+    for sheet_name, date_col_map in sheet_date_cols.items():
+        ws_ro = master_wb_ro[sheet_name]
+        mc = ws_ro.max_column or 35
+        cw = {}
+
+        # ── Rooms section ──────────────────────────────────────────────────
+        # Step 1: copy row 9 → row 10 (value paste, overwrites row 10)
+        for col in range(2, mc + 1):
+            cw[(10, col)] = ws_ro.cell(9, col).value
+        # Step 2: clear rows 8 and 9 (forecast data fills them back in below)
+        for col in range(2, mc + 1):
+            cw[(8, col)] = None
+            cw[(9, col)] = None
+        # Step 3: write new forecast data; these override the clears for matched cols
+        for d, col in date_col_map.items():
+            daily_filled, booked_rooms, _ = forecast_data[d]
+            if daily_filled is not None:
+                cw[(9, col)] = daily_filled
+            if booked_rooms is not None:
+                cw[(8, col)] = booked_rooms
+
+        # ── ADR section ────────────────────────────────────────────────────
+        # Step 4: shift rows 14→15, 15→16, 16→17, 17→18 (value paste)
+        #         row 18 gets old row 17 data (replaces / deletes 4 Week Prior)
+        for col in range(2, mc + 1):
+            cw[(18, col)] = ws_ro.cell(17, col).value
+            cw[(17, col)] = ws_ro.cell(16, col).value
+            cw[(16, col)] = ws_ro.cell(15, col).value
+            cw[(15, col)] = ws_ro.cell(14, col).value
+        # Step 5: clear row 14, then write new ADR for matched date columns
+        for col in range(2, mc + 1):
+            cw[(14, col)] = None
+        for d, col in date_col_map.items():
+            _, _, cur_adr = forecast_data[d]
+            if cur_adr is not None:
+                cw[(14, col)] = cur_adr
+
+        writes[sheet_name] = cw
+
+    if skipped:
+        log.append('Forecast: ' + str(skipped) + ' dates skipped (no matching sheet/column)')
+    total_dates = sum(len(v) for v in sheet_date_cols.values())
+    log.append('Forecast: ' + str(len(sheet_date_cols)) + ' sheets updated, ' +
+               str(total_dates) + ' dates applied')
+    return writes
+
+
+# ---------------------------------------------------------------------------
+# Monthly Occupancy (Rooms Available)
+# ---------------------------------------------------------------------------
+
+def parse_occupancy_csv(csv_bytes):
+    """
+    Parse a Monthly Occupancy (Rooms Available) CSV.
+    Expected format:
+      Row 1: header — "Month", "", "Day 01", "Day 02", ..., "Day 31", "Available"
+      Each month block has 5 rows: GFPL, GFPS, SFB, *TOTAL, * Occ %
+      Col A: "Month YYYY" (only on first row of each block; empty for the rest)
+      Col B: label
+      Cols C-AG (0-indexed 2-32): Day 01 through Day 31
+    Rows starting with '*' are skipped (totals / occ %).
+    Returns {(year, month): {label: {day: value}}} where day is 1-based.
+    """
+    text = csv_bytes.decode('utf-8-sig', errors='replace')
+    reader = csv.reader(StringIO(text))
+    data = {}
+    current_key = None
+    header_skipped = False
+    for row in reader:
+        if not header_skipped:
+            header_skipped = True
+            continue
+        if not row:
+            continue
+        col_a = row[0].strip() if len(row) > 0 else ''
+        col_b = row[1].strip() if len(row) > 1 else ''
+        if col_a:
+            try:
+                dt = datetime.strptime(col_a, '%B %Y')
+                current_key = (dt.year, dt.month)
+            except ValueError:
+                current_key = None
+        if current_key is None or not col_b or col_b.startswith('*'):
+            continue
+        day_vals = {}
+        for day in range(1, 32):
+            csv_idx = day + 1  # col C = day 1 = 0-indexed 2
+            raw = row[csv_idx].strip() if len(row) > csv_idx else ''
+            val = _parse_num(raw, force_int=True)
+            if val is not None:
+                day_vals[day] = val
+        if day_vals:
+            data.setdefault(current_key, {})[col_b] = day_vals
+    if not data:
+        raise ValueError(
+            'No valid monthly occupancy rows found. '
+            'Expected a CSV with "Month YYYY" in column A, label in column B, '
+            'and day values in columns C onward.'
+        )
+    return data
+
+
+def process_occupancy(master_wb_ro, occupancy_data, log):
+    """
+    Compute cell writes for Monthly Occupancy (Rooms Available).
+    For each month/label, finds the destination row using label-based matching
+    (rows 40-55, col A) then writes each day value at col = day + 1 (B = day 1).
+    Returns {sheet_name: {(row, col): value}}.
+    """
+    writes = {}
+    sheets_matched = 0
+    cells_written = 0
+    for (year, month), label_days in occupancy_data.items():
+        ws_ro = find_sheet_for_date(master_wb_ro, date(year, month, 1))
+        if ws_ro is None:
+            log.append('Occupancy: no sheet for ' + str(year) + '-' + str(month).zfill(2))
+            continue
+        sheets_matched += 1
+        sheet_writes = writes.setdefault(ws_ro.title, {})
+        days_in_month = calendar.monthrange(year, month)[1]
+        for label, day_vals in label_days.items():
+            dest_row = find_row_for_label(ws_ro, label, search_col=1, min_row=40, max_row=55)
+            if dest_row is None:
+                log.append('Occupancy: label "' + label + '" not found in ' + ws_ro.title)
+                continue
+            for day, val in day_vals.items():
+                if day > days_in_month:
+                    continue  # skip phantom days (e.g. day 29-31 in February)
+                sheet_writes[(dest_row, day + 1)] = val
+                cells_written += 1
+    log.append('Occupancy: ' + str(sheets_matched) + ' sheets updated, ' +
+               str(cells_written) + ' cells written')
+    return writes
 
 
 # ---------------------------------------------------------------------------
@@ -413,12 +634,27 @@ def generate():
         log.append('Loading input: ' + input_file.filename)
         input_wb = openpyxl.load_workbook(BytesIO(input_file.read()), data_only=True)
 
+        # Parse optional forecast CSV (small, negligible memory)
+        forecast_file = request.files.get('forecast_file')
+        forecast_data = {}
+        if forecast_file and forecast_file.filename:
+            log.append('Loading forecast: ' + forecast_file.filename)
+            forecast_data = parse_forecast_csv(forecast_file.read())
+            log.append('Forecast dates loaded: ' + str(len(forecast_data)))
+
+        # Parse optional occupancy CSV
+        occupancy_file = request.files.get('occupancy_file')
+        occupancy_data = {}
+        if occupancy_file and occupancy_file.filename:
+            log.append('Loading occupancy: ' + occupancy_file.filename)
+            occupancy_data = parse_occupancy_csv(occupancy_file.read())
+            log.append('Occupancy months loaded: ' + str(len(occupancy_data)))
+
         log.append('Loading master: ' + master_file.filename)
         master_bytes = master_file.read()
 
         # Phase 1: compute all writes using the data_only workbook, then free it
-        # before loading the write copy.  Only one full workbook lives in memory
-        # at a time, keeping peak usage well under the container limit.
+        # before loading the write copy.  Only one full workbook in memory at a time.
         master_wb_ro = openpyxl.load_workbook(BytesIO(master_bytes), data_only=True)
         if prop == 'h2o':
             writes = process_expedia(master_wb_ro, input_wb, H2O_EXPEDIA_MAP, log)
@@ -426,6 +662,21 @@ def generate():
             writes = process_expedia(master_wb_ro, input_wb, SMS_EXPEDIA_MAP, log)
         else:
             writes = process_bookingcom(master_wb_ro, input_wb, log)
+
+        compset_cells = sum(len(v) for v in writes.values())
+
+        forecast_writes = {}
+        if forecast_data:
+            forecast_writes = process_forecast(master_wb_ro, forecast_data, log)
+            for sheet, cw in forecast_writes.items():
+                writes.setdefault(sheet, {}).update(cw)
+
+        occupancy_writes = {}
+        if occupancy_data:
+            occupancy_writes = process_occupancy(master_wb_ro, occupancy_data, log)
+            for sheet, cw in occupancy_writes.items():
+                writes.setdefault(sheet, {}).update(cw)
+
         master_wb_ro.close()
         del master_wb_ro
 
@@ -446,12 +697,25 @@ def generate():
         except Exception:
             pass  # console encoding issues must not abort a good response
 
-        return send_file(
+        def _cl(provided, cells):
+            if not provided:
+                return 'skipped'
+            return 'done' if cells > 0 else 'failed'
+
+        forecast_cells = sum(len(v) for v in forecast_writes.values())
+        occupancy_cells = sum(len(v) for v in occupancy_writes.values())
+
+        response = send_file(
             output,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
             download_name=filename,
         )
+        response.headers['X-Checklist-Compset']  = 'done' if compset_cells > 0 else 'failed'
+        response.headers['X-Checklist-Rooms']     = _cl(bool(forecast_data), forecast_cells)
+        response.headers['X-Checklist-ADR']       = _cl(bool(forecast_data), forecast_cells)
+        response.headers['X-Checklist-Occupancy'] = _cl(bool(occupancy_data), occupancy_cells)
+        return response
 
     except Exception as e:
         try:

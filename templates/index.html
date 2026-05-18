@@ -23,13 +23,6 @@
     gap: 16px;
     box-shadow: 0 2px 8px rgba(0,0,0,.25);
   }
-  .header-icon {
-    width: 40px; height: 40px;
-    background: #c9a84c;
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 20px;
-  }
   .header h1 { color: #fff; font-size: 22px; font-weight: 600; }
   .header p  { color: #8fa8cc; font-size: 13px; margin-top: 2px; }
 
@@ -98,7 +91,6 @@
   .upload-zone input[type=file] {
     position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%;
   }
-  .upload-icon { font-size: 28px; margin-bottom: 8px; }
   .upload-zone h3 { font-size: 13px; font-weight: 700; color: #1a2b4a; margin-bottom: 4px; }
   .upload-zone p  { font-size: 12px; color: #7a8fa8; }
   .upload-zone .file-name {
@@ -170,11 +162,41 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
+  /* ── Forecast section ── */
+  .forecast-section { margin-top: 20px; }
+  .forecast-divider {
+    font-size: 12px; color: #9aaabb; margin: 0 0 10px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .forecast-divider::before, .forecast-divider::after {
+    content: ''; flex: 1; border-top: 1px solid #dde3ec;
+  }
+  .optional-badge {
+    display: inline-block;
+    font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+    background: #eef2f8; color: #5a6e8a;
+    border-radius: 4px; padding: 2px 7px;
+    white-space: nowrap;
+  }
+
   /* ── Zone-level inline error ── */
   .zone-error {
     margin-top: 6px; font-size: 11px; font-weight: 600;
     color: #b91c1c; word-break: break-word;
   }
+
+  /* ── Checklist ── */
+  .checklist {
+    margin-top: 12px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 5px 16px;
+  }
+  .check-item {
+    font-size: 13px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .check-item.done    { color: #1a6b3e; }
+  .check-item.skipped { color: #9aaabb; font-weight: 500; }
+  .check-item.failed  { color: #b91c1c; }
 
   /* ── Info footer ── */
   .info {
@@ -186,7 +208,6 @@
 <body>
 
 <div class="header">
-  <div class="header-icon">&#127970;</div>
   <div>
     <h1>Rate Deck Automation</h1>
     <p>Upload competitor data from Expedia or Lighthouse and an old Rate Deck and get a updated Rate Deck instantly</p>
@@ -214,7 +235,6 @@
             <input type="file" name="input_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-sms-input','name-sms-input')" />
             <button type="button" class="clear-btn" onclick="clearFile(event,'zone-sms-input','name-sms-input')" title="Remove file">&times;</button>
-            <div class="upload-icon">&#128196;</div>
             <h3>Expedia Price Grid</h3>
             <p>expedia_price_grid_&hellip;.xlsx</p>
             <div class="file-name" id="name-sms-input"></div>
@@ -223,10 +243,25 @@
             <input type="file" name="master_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-sms-master','name-sms-master')" />
             <button type="button" class="clear-btn" onclick="clearFile(event,'zone-sms-master','name-sms-master')" title="Remove file">&times;</button>
-            <div class="upload-icon">&#128209;</div>
             <h3>Master Rate Deck</h3>
             <p>KO-SMS-Rate Deck&hellip;.xlsx</p>
             <div class="file-name" id="name-sms-master"></div>
+          </div>
+          <div class="upload-zone" id="zone-sms-forecast">
+            <input type="file" name="forecast_file" accept=".csv,.xlsx,.xls"
+                   onchange="fileChosen(this,'zone-sms-forecast','name-sms-forecast')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-sms-forecast','name-sms-forecast')" title="Remove file">&times;</button>
+            <h3>Forecast Revenue Report</h3>
+            <p>Forecasted Revenue .csv</p>
+            <div class="file-name" id="name-sms-forecast"></div>
+          </div>
+          <div class="upload-zone" id="zone-sms-occupancy">
+            <input type="file" name="occupancy_file" accept=".csv"
+                   onchange="fileChosen(this,'zone-sms-occupancy','name-sms-occupancy')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-sms-occupancy','name-sms-occupancy')" title="Remove file">&times;</button>
+            <h3>Monthly Occupancy Report</h3>
+            <p>Monthly Occupancy .csv</p>
+            <div class="file-name" id="name-sms-occupancy"></div>
           </div>
         </div>
         <div class="field">
@@ -251,7 +286,6 @@
             <input type="file" name="input_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-h2o-input','name-h2o-input')" />
             <button type="button" class="clear-btn" onclick="clearFile(event,'zone-h2o-input','name-h2o-input')" title="Remove file">&times;</button>
-            <div class="upload-icon">&#128196;</div>
             <h3>Expedia Price Grid</h3>
             <p>expedia_price_grid_&hellip;.xlsx</p>
             <div class="file-name" id="name-h2o-input"></div>
@@ -260,10 +294,25 @@
             <input type="file" name="master_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-h2o-master','name-h2o-master')" />
             <button type="button" class="clear-btn" onclick="clearFile(event,'zone-h2o-master','name-h2o-master')" title="Remove file">&times;</button>
-            <div class="upload-icon">&#128209;</div>
             <h3>Master Rate Deck</h3>
             <p>KO-H2O-Rate Deck&hellip;.xlsx</p>
             <div class="file-name" id="name-h2o-master"></div>
+          </div>
+          <div class="upload-zone" id="zone-h2o-forecast">
+            <input type="file" name="forecast_file" accept=".csv,.xlsx,.xls"
+                   onchange="fileChosen(this,'zone-h2o-forecast','name-h2o-forecast')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-h2o-forecast','name-h2o-forecast')" title="Remove file">&times;</button>
+            <h3>Forecast Revenue Report</h3>
+            <p>Forecasted Revenue .csv</p>
+            <div class="file-name" id="name-h2o-forecast"></div>
+          </div>
+          <div class="upload-zone" id="zone-h2o-occupancy">
+            <input type="file" name="occupancy_file" accept=".csv"
+                   onchange="fileChosen(this,'zone-h2o-occupancy','name-h2o-occupancy')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-h2o-occupancy','name-h2o-occupancy')" title="Remove file">&times;</button>
+            <h3>Monthly Occupancy Report</h3>
+            <p>Monthly Occupancy .csv</p>
+            <div class="file-name" id="name-h2o-occupancy"></div>
           </div>
         </div>
         <div class="field">
@@ -288,7 +337,6 @@
             <input type="file" name="input_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-swm-input','name-swm-input')" />
             <button type="button" class="clear-btn" onclick="clearFile(event,'zone-swm-input','name-swm-input')" title="Remove file">&times;</button>
-            <div class="upload-icon">&#128196;</div>
             <h3>Lighthouse Rate Export</h3>
             <p>southwinds-motel_&hellip;.xlsx</p>
             <div class="file-name" id="name-swm-input"></div>
@@ -297,10 +345,25 @@
             <input type="file" name="master_file" accept=".xlsx,.xls" required
                    onchange="fileChosen(this,'zone-swm-master','name-swm-master')" />
             <button type="button" class="clear-btn" onclick="clearFile(event,'zone-swm-master','name-swm-master')" title="Remove file">&times;</button>
-            <div class="upload-icon">&#128209;</div>
             <h3>Master Rate Deck</h3>
             <p>SWM-Rate Deck&hellip;.xlsx</p>
             <div class="file-name" id="name-swm-master"></div>
+          </div>
+          <div class="upload-zone" id="zone-swm-forecast">
+            <input type="file" name="forecast_file" accept=".csv,.xlsx,.xls"
+                   onchange="fileChosen(this,'zone-swm-forecast','name-swm-forecast')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-swm-forecast','name-swm-forecast')" title="Remove file">&times;</button>
+            <h3>Forecast Revenue Report</h3>
+            <p>Forecasted Revenue .csv</p>
+            <div class="file-name" id="name-swm-forecast"></div>
+          </div>
+          <div class="upload-zone" id="zone-swm-occupancy">
+            <input type="file" name="occupancy_file" accept=".csv"
+                   onchange="fileChosen(this,'zone-swm-occupancy','name-swm-occupancy')" />
+            <button type="button" class="clear-btn" onclick="clearFile(event,'zone-swm-occupancy','name-swm-occupancy')" title="Remove file">&times;</button>
+            <h3>Monthly Occupancy Report</h3>
+            <p>Monthly Occupancy .csv</p>
+            <div class="file-name" id="name-swm-occupancy"></div>
           </div>
         </div>
         <div class="field">
@@ -407,6 +470,12 @@ document.querySelectorAll('.upload-zone').forEach(zone => {
       const res = await fetch('/generate', { method: 'POST', body: fd });
 
       if (res.ok) {
+        // Read checklist headers before consuming body
+        const clCompset   = res.headers.get('X-Checklist-Compset')  || 'skipped';
+        const clRooms     = res.headers.get('X-Checklist-Rooms')    || 'skipped';
+        const clAdr       = res.headers.get('X-Checklist-ADR')      || 'skipped';
+        const clOccupancy = res.headers.get('X-Checklist-Occupancy')|| 'skipped';
+
         // Trigger download
         const blob = await res.blob();
         const cd   = res.headers.get('Content-Disposition') || '';
@@ -418,8 +487,19 @@ document.querySelectorAll('.upload-zone').forEach(zone => {
         a.href = url; a.download = fname; a.click();
         URL.revokeObjectURL(url);
 
+        function checkItem(st, label) {
+          const icon  = st === 'done' ? '&#10003;' : st === 'failed' ? '&#10007;' : '&minus;';
+          return '<div class="check-item ' + st + '"><span>' + icon + '</span>' + label + '</div>';
+        }
         status.className = 'status success';
-        status.innerHTML = '&#10003;&nbsp; <strong>Done!</strong> Downloading <em>' + fname + '</em>';
+        status.innerHTML =
+          '&#10003;&nbsp; <strong>Done!</strong> Downloading <em>' + fname + '</em>' +
+          '<div class="checklist">' +
+            checkItem(clCompset,   'Compset Data') +
+            checkItem(clRooms,     'Rooms Booked Section') +
+            checkItem(clAdr,       'ADR Section') +
+            checkItem(clOccupancy, 'Rooms Available Section') +
+          '</div>';
       } else {
         let errMsg = 'An unexpected server error occurred. Please try again.';
         try {
