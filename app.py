@@ -594,7 +594,7 @@ def process_occupancy(master_wb_ro, occupancy_data, log):
         sheet_writes = writes.setdefault(ws_ro.title, {})
         days_in_month = calendar.monthrange(year, month)[1]
         for label, day_vals in label_days.items():
-            dest_row = find_row_for_label(ws_ro, label, search_col=1, min_row=40, max_row=55)
+            dest_row = find_row_for_label(ws_ro, label, search_col=1, min_row=35, max_row=55)
             if dest_row is None:
                 log.append('Occupancy: label "' + label + '" not found in ' + ws_ro.title)
                 continue
