@@ -274,14 +274,20 @@ def process_expedia(master_wb_ro, input_wb, competitor_map, log):
     """
     ws_expedia = input_wb.active  # "Expedia - Revenue management"
 
+    # Scan the whole sheet — hotels may appear in different rows depending on
+    # how many summary/header rows Expedia adds.  Skip the user's-own and
+    # "Competitive set average rates" rows by matching only on competitor kw.
     expedia_row_for = {}
-    for row in range(12, 31):
+    last_row = max(ws_expedia.max_row or 0, 100)
+    for row in range(5, last_row + 1):
         name = ws_expedia.cell(row, 1).value
         if not name:
             continue
         name_lc = str(name).lower()
+        if 'competitive set' in name_lc:
+            continue
         for (exp_kw, deck_kw) in competitor_map:
-            if exp_kw.lower() in name_lc:
+            if exp_kw.lower() in name_lc and deck_kw not in expedia_row_for:
                 expedia_row_for[deck_kw] = row
                 break
 
@@ -475,15 +481,20 @@ def process_forecast(master_wb_ro, forecast_data, log):
     writes = {}
     for sheet_name, date_col_map in sheet_date_cols.items():
         ws_ro = master_wb_ro[sheet_name]
-        mc = ws_ro.max_column or 35
+        # Only operate on the date-column range.  Columns to the right hold
+        # formulas (weekly averages, monthly totals) that must be preserved.
+        ym = parse_sheet_month_year(sheet_name)
+        if ym is None:
+            continue
+        last_date_col = 1 + calendar.monthrange(ym[0], ym[1])[1]  # col B = day 1
         cw = {}
 
         # ── Rooms section ──────────────────────────────────────────────────
-        # Step 1: copy row 9 → row 10 (value paste, overwrites row 10)
-        for col in range(2, mc + 1):
+        # Step 1: copy row 9 → row 10 (date columns only)
+        for col in range(2, last_date_col + 1):
             cw[(10, col)] = ws_ro.cell(9, col).value
-        # Step 2: clear rows 8 and 9 (forecast data fills them back in below)
-        for col in range(2, mc + 1):
+        # Step 2: clear rows 8 and 9 in date columns (forecast fills them back in)
+        for col in range(2, last_date_col + 1):
             cw[(8, col)] = None
             cw[(9, col)] = None
         # Step 3: write new forecast data; these override the clears for matched cols
@@ -495,15 +506,14 @@ def process_forecast(master_wb_ro, forecast_data, log):
                 cw[(8, col)] = booked_rooms
 
         # ── ADR section ────────────────────────────────────────────────────
-        # Step 4: shift rows 14→15, 15→16, 16→17, 17→18 (value paste)
-        #         row 18 gets old row 17 data (replaces / deletes 4 Week Prior)
-        for col in range(2, mc + 1):
+        # Step 4: shift rows 14→15, 15→16, 16→17, 17→18 (date columns only)
+        for col in range(2, last_date_col + 1):
             cw[(18, col)] = ws_ro.cell(17, col).value
             cw[(17, col)] = ws_ro.cell(16, col).value
             cw[(16, col)] = ws_ro.cell(15, col).value
             cw[(15, col)] = ws_ro.cell(14, col).value
         # Step 5: clear row 14, then write new ADR for matched date columns
-        for col in range(2, mc + 1):
+        for col in range(2, last_date_col + 1):
             cw[(14, col)] = None
         for d, col in date_col_map.items():
             _, _, cur_adr = forecast_data[d]
