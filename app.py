@@ -82,22 +82,31 @@ def _to_int_if_whole(v):
     return v
 
 def normalize_expedia(val):
-    """Map Expedia cell to Rate Deck value. Returns None to skip writing."""
+    """Map Expedia cell to Rate Deck value. Returns None to skip writing.
+    Handles both the old format (S/I/M/-) and the new format
+    (Sold out / Min. N nights / em-dash)."""
     if val is None:
         return None
     if isinstance(val, (int, float)):
         return _to_int_if_whole(val)
     s = str(val).strip()
-    if s in ('S', 'I'):
+    if not s:
+        return None
+    sl = s.lower()
+    if sl in ('sold out', 's', 'i'):
         return 'SOLD'
+    if s in ('-', '–', '—'):  # hyphen, en-dash, em-dash
+        return None
     if s == 'M':
         return 'M'
-    if s == '-':
-        return None   # no data - do not overwrite existing value
+    import re
+    m = re.match(r'min\.?\s*(\d+)\s*nights?', sl)
+    if m:
+        return 'LOS ' + m.group(1)
     try:
         return _to_int_if_whole(float(s.replace(',', '')))
     except ValueError:
-        return s if s else None
+        return s
 
 def normalize_bookingcom(val):
     """Map Booking.com cell to Rate Deck value. Returns None to skip writing."""
@@ -210,19 +219,42 @@ def find_row_for_label(ws, keyword, search_col=1, min_row=20, max_row=50):
 # Expedia date->column map
 # ---------------------------------------------------------------------------
 
+def _detect_month_row(ws):
+    """Find which row holds Expedia month headers (e.g. 'MAY 2026').
+    Old format used row 9; new format uses row 5.  Returns None if not found.
+    Day numbers are always exactly 2 rows below the month row in both formats."""
+    for r in range(3, 13):
+        for c in range(2, min(ws.max_column + 1, 30)):
+            v = ws.cell(r, c).value
+            if not v or not isinstance(v, str):
+                continue
+            s = _normalise_month_str(str(v)).title()
+            for fmt in ('%B %Y', '%b %Y'):
+                try:
+                    datetime.strptime(s, fmt)
+                    return r
+                except ValueError:
+                    pass
+    return None
+
+
 def build_expedia_date_col_map(ws):
     """
-    Returns {date: col_idx} by reading month headers from row 9
-    and day numbers from row 11.
+    Returns {date: col_idx} by auto-detecting the month-header row.
+    Day numbers are always two rows below.
     """
     date_map = {}
+    month_row = _detect_month_row(ws)
+    if month_row is None:
+        return date_map
+    day_row = month_row + 2
+
     current_month = None
     current_year = None
-
     for col in range(2, ws.max_column + 1):
-        month_cell = ws.cell(9, col).value
+        month_cell = ws.cell(month_row, col).value
         if month_cell and isinstance(month_cell, str) and len(month_cell.strip()) > 4:
-            normalised = _normalise_month_str(month_cell).title()  # e.g. "September 2026"
+            normalised = _normalise_month_str(month_cell).title()
             for fmt in ('%B %Y', '%b %Y'):
                 try:
                     dt = datetime.strptime(normalised, fmt)
@@ -235,7 +267,7 @@ def build_expedia_date_col_map(ws):
         if current_month is None:
             continue
 
-        day_val = ws.cell(11, col).value
+        day_val = ws.cell(day_row, col).value
         if day_val is not None:
             try:
                 full_date = date(current_year, current_month, int(day_val))
@@ -284,7 +316,7 @@ def process_expedia(master_wb_ro, input_wb, competitor_map, log):
         if not name:
             continue
         name_lc = str(name).lower()
-        if 'competitive set' in name_lc:
+        if 'competitive set' in name_lc or name_lc.strip() == 'your property':
             continue
         for (exp_kw, deck_kw) in competitor_map:
             if exp_kw.lower() in name_lc and deck_kw not in expedia_row_for:
